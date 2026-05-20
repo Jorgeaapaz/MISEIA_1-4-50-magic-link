@@ -1,36 +1,176 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Magik Link — Passwordless Authentication System
+
+A **Next.js 16 / TypeScript** full-stack web application that implements **passwordless authentication via magic links** — users log in by clicking a time-limited link sent to their email, with no password required.
+
+---
+
+## Features Implemented
+
+### 1. Magic Link Generation & Email Delivery
+Users submit their email on the login page. The API generates a signed JWT (15-minute expiry) and sends a clickable magic link via Nodemailer to the user's inbox. MailHog is used as the local SMTP capture server during development.
+
+### 2. Token Verification & Session Management
+When the user clicks the link, the `/auth/verify` page calls the API to validate the JWT. On success, a longer-lived session token (7-day expiry) is issued and stored in `localStorage`. The user is then redirected to the protected dashboard.
+
+### 3. Protected Dashboard & Auth Context
+A React Context (`AuthContext`) manages auth state across the app — persisting the session token, syncing with the server on load via `/api/auth/me`, and providing login/logout helpers. The dashboard displays user details (email, member since, last login) and is inaccessible to unauthenticated users.
+
+---
+
+## Project Structure
+
+```
+magik-link/
+├── app/
+│   ├── api/
+│   │   └── auth/
+│   │       ├── send-magic-link/route.ts  # POST — generates & emails the magic link JWT
+│   │       ├── verify/route.ts           # GET  — validates token, returns session JWT
+│   │       └── me/route.ts               # GET  — returns current authenticated user
+│   ├── auth/
+│   │   └── verify/page.tsx              # Handles link click, calls verify API, redirects
+│   ├── dashboard/page.tsx               # Protected page showing user session info
+│   ├── login/page.tsx                   # Email input form to request a magic link
+│   ├── layout.tsx                       # Root layout wrapping AuthContext provider
+│   └── page.tsx                         # Root redirect (→ login or dashboard)
+├── context/
+│   └── AuthContext.tsx                  # Global auth state, token persistence, useAuth hook
+├── lib/
+│   ├── db.ts                            # MongoDB singleton connection with pooling
+│   ├── jwt.ts                           # JWT sign/verify helpers (magic link + session)
+│   └── mail.ts                          # Nodemailer transport and magic link email template
+├── .env.local                           # Local environment variables (not committed)
+├── .gitlab-ci.yml                       # GitLab CI pipeline (build on main/master)
+├── next.config.ts                       # Next.js configuration
+└── tsconfig.json                        # TypeScript strict-mode configuration
+```
+
+---
+
+## Design Patterns / Architecture
+
+- **Singleton (Database connection)** — `lib/db.ts` maintains a single MongoDB client instance across hot-reloads in development and across requests in production, preventing connection exhaustion.
+- **Repository / Service Layer** — Business logic (token creation, email dispatch, user upsert) is isolated in `lib/` modules and consumed by thin API route handlers in `app/api/`.
+- **Context + Provider (Auth State)** — `AuthContext.tsx` implements the React Context pattern to share auth state across the component tree without prop drilling.
+- **Stateless JWT Sessions** — No server-side session store. The session token is self-contained (signed, typed payload) and verified on each protected request, enabling horizontal scaling.
+
+---
+
+## How It Works
+
+The user submits their email → the server creates a short-lived signed JWT and sends it as a URL parameter in an email → the user clicks the link, the token is verified server-side and exchanged for a long-lived session JWT → the session token is stored client-side and sent with every subsequent request to authenticate the user.
+
+```typescript
+// lib/jwt.ts — sign a magic link token (15 min) or session token (7 days)
+export function signToken(payload: object, expiresIn: string = '15m'): string {
+  return jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn });
+}
+
+// app/api/auth/send-magic-link/route.ts — core flow
+const token = signToken({ email }, '15m');
+const magicLink = `${process.env.NEXT_PUBLIC_APP_URL}/auth/verify?token=${token}`;
+await sendMagicLinkEmail(email, magicLink);
+```
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- **Node.js** 20+
+- **MongoDB** running locally (default: `mongodb://localhost:27017`)
+- **MailHog** for email capture in development
+
+Install MailHog (Go required, or use Docker):
+```bash
+# Docker (recommended)
+docker run -d -p 1025:1025 -p 8025:8025 mailhog/mailhog
+```
+
+### Clone & Install
+
+```bash
+git clone https://gitlab.codecrypto.academy/jorgeaapaz/MISEIA_1-4-50-magic-link.git
+cd MISEIA_1-4-50-magic-link
+npm install
+```
+
+### Environment Variables
+
+Create `.env.local` in the project root:
+
+```env
+MONGODB_URI=mongodb://localhost:27017/magiklink
+JWT_SECRET=your-secret-here
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+SMTP_HOST=localhost
+SMTP_PORT=1025
+```
+
+### Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The MailHog web UI is available at [http://localhost:8025](http://localhost:8025) to inspect outgoing emails.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Example Flows
 
-## Learn More
+### Success — Login with magic link
 
-To learn more about Next.js, take a look at the following resources:
+1. Navigate to `http://localhost:3000/login`
+2. Enter your email and click **Send Magic Link**
+3. Open MailHog at `http://localhost:8025` — find the email and click the link
+4. You are redirected to `/dashboard` showing:
+   ```
+   Welcome back, user@example.com
+   Member since: 2026-05-20
+   Last login: just now
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Edge Case — Expired token
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+If the magic link is clicked after 15 minutes, the verify page displays:
+```
+Invalid or expired link. Please request a new one.
+```
+The user is redirected back to `/login` to request a fresh link.
 
-## Deploy on Vercel
+### Edge Case — Already authenticated
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+If a logged-in user navigates to `/login`, the `AuthContext` detects a valid session token and immediately redirects them to `/dashboard`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## CI/CD
+
+GitLab CI runs on every push to `main`/`master`:
+
+```yaml
+# .gitlab-ci.yml
+build:
+  image: node:20-alpine
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths: [.next/]
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16.2.4 (App Router) |
+| Language | TypeScript 5 |
+| UI | React 19, Tailwind CSS 4 |
+| Database | MongoDB 7 |
+| Auth tokens | jsonwebtoken 9 |
+| Email | Nodemailer 8 + MailHog (dev) |
+| CI | GitLab CI (node:20-alpine) |
