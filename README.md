@@ -242,6 +242,44 @@ build:
 
 ---
 
+## Deployment
+
+The app ships as a Docker image built with a multistage `Dockerfile` using Next.js standalone output. Production is served at `https://magik-link.deviaaps.com` behind Traefik on the `miseia-net` Docker network.
+
+### Build and run locally with Docker
+
+```bash
+docker build -t magik-link:local .
+
+docker run -p 3000:3000 \
+  -e MONGODB_URI=mongodb://host.docker.internal:27017/magiklink \
+  -e JWT_SECRET=your-secret \
+  -e NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  -e SMTP_HOST=host.docker.internal \
+  -e SMTP_PORT=1025 \
+  magik-link:local
+```
+
+Open [http://localhost:3000](http://localhost:3000) to verify.
+
+### Deploy to production (VM via docker-compose)
+
+```bash
+# On the remote VM — pull latest image and recreate the container
+export GITHUB_USER=<your-github-user>
+export JWT_SECRET=<production-secret>
+export MONGODB_URI=mongodb://mongodb:27017/magiklink
+
+docker compose -f docker-compose.deploy.yml pull
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+The GitHub Actions workflow (`.github/workflows/ci-deploy.yml`) automates this on every push to `master`.
+
+See [Architecture Decision Records](docs/adr/) for key design decisions.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
