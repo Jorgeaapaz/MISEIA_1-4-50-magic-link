@@ -8,14 +8,11 @@ function VerifyContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { login } = useAuth();
-  const [error, setError] = useState<string | null>(null);
+  const token = searchParams.get("token");
+  const [apiError, setApiError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = searchParams.get("token");
-    if (!token) {
-      setError("Token no proporcionado");
-      return;
-    }
+    if (!token) return;
 
     fetch(`/api/auth/verify?token=${encodeURIComponent(token)}`)
       .then(async (res) => {
@@ -30,9 +27,11 @@ function VerifyContent() {
         router.push("/dashboard");
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "Error inesperado");
+        setApiError(err instanceof Error ? err.message : "Error inesperado");
       });
-  }, [searchParams, login, router]);
+  }, [token, login, router]);
+
+  const error = !token ? "Token no proporcionado" : apiError;
 
   if (error) {
     return (

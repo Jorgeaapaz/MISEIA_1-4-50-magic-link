@@ -28,38 +28,52 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(
+    () => typeof window !== "undefined" && Boolean(localStorage.getItem("auth_token"))
+  );
 
-  const fetchUser = useCallback(async (authToken: string) => {
+  // Pure fetcher — returns user data or null, never calls setState
+  const loadUserData = useCallback(async (authToken: string): Promise<User | null> => {
     try {
       const res = await fetch("/api/auth/me", {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
-      setUser(data.user);
-      setToken(authToken);
+      return data.user as User;
     } catch {
       localStorage.removeItem("auth_token");
-      setToken(null);
-      setUser(null);
+      return null;
     }
   }, []);
 
+  // On mount: restore session from localStorage — state is set inside .then() callback (async, not synchronous)
   useEffect(() => {
     const stored = localStorage.getItem("auth_token");
-    if (stored) {
-      fetchUser(stored).finally(() => setIsLoading(false));
-    } else {
+    if (!stored) return;
+    loadUserData(stored).then((userData) => {
+      if (userData) {
+        setUser(userData);
+        setToken(stored);
+      } else {
+        setToken(null);
+        setUser(null);
+      }
       setIsLoading(false);
-    }
-  }, [fetchUser]);
+    });
+  }, [loadUserData]);
 
-  const login = async (newToken: string) => {
+  const login = useCallback(async (newToken: string) => {
     localStorage.setItem("auth_token", newToken);
-    setToken(newToken);
-    await fetchUser(newToken);
-  };
+    const userData = await loadUserData(newToken);
+    if (userData) {
+      setUser(userData);
+      setToken(newToken);
+    } else {
+      setToken(null);
+      setUser(null);
+    }
+  }, [loadUserData]);
 
   const logout = () => {
     localStorage.removeItem("auth_token");
