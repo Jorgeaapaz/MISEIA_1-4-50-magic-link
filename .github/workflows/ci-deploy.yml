@@ -1,0 +1,129 @@
+name: CI and Deploy
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/magik-link
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+        env:
+          CI: true
+
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy to GCloud VM
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write SSH private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy container on VM
+        env:
+          GITHUB_USER: ${{ github.repository_owner }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'ENDSSH'
+            set -e
+            mkdir -p ~/MISEIA150_magik-link
+            cd ~/MISEIA150_magik-link
+
+            # Pull latest image
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository_owner }}/magik-link:latest
+
+            # Stop and remove existing container
+            docker rm -f magik-link 2>/dev/null || true
+
+            # Start new container with Traefik labels
+            docker run -d \
+              --name magik-link \
+              --restart unless-stopped \
+              --network miseia-net \
+              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e NEXT_PUBLIC_APP_URL="https://magik-link.deviaaps.com" \
+              -e SMTP_HOST="mailhog" \
+              -e SMTP_PORT="1025" \
+              -e NODE_ENV="production" \
+              -l "traefik.enable=true" \
+              -l "traefik.http.routers.magik-link.rule=Host(\`magik-link.deviaaps.com\`)" \
+              -l "traefik.http.routers.magik-link.entrypoints=websecure" \
+              -l "traefik.http.routers.magik-link.tls=true" \
+              -l "traefik.http.routers.magik-link.tls.certresolver=cloudflare" \
+              -l "traefik.http.services.magik-link-svc.loadbalancer.server.port=3000" \
+              -l "traefik.docker.network=miseia-net" \
+              ghcr.io/${{ github.repository_owner }}/magik-link:latest
+
+            echo "Deploy complete — https://magik-link.deviaaps.com"
+          ENDSSH
