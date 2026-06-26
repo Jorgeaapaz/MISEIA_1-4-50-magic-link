@@ -280,6 +280,28 @@ See [Architecture Decision Records](docs/adr/) for key design decisions.
 
 ---
 
+## Technical Decisions — Quantitative Analysis
+
+### JWT Stateless Sessions vs Server-Side Session Store
+
+Benchmark: 10,000 iterations on Node.js 20, Intel Core i7, Windows 11.  
+Run yourself: `node scripts/benchmark-jwt.mjs`
+
+| Metric | JWT (this project) | Redis Session Store |
+|---|---|---|
+| Session token size per request | **239 bytes** | **32 bytes** (opaque session ID) |
+| Overhead vs session ID | +207 bytes/request | baseline |
+| Server memory per session | **0 bytes** (stateless) | ~200–500 bytes in Redis |
+| Sign latency p50 / p95 | **0.049 ms / 0.088 ms** | N/A (local crypto) |
+| Verify latency p50 / p95 | **0.057 ms / 0.109 ms** | 1–3 ms (Redis round-trip) |
+| Infrastructure cost | **$0 extra** | ~$10–20/mo managed Redis |
+| Horizontal scaling | **Stateless — any instance verifies** | Requires shared session store |
+| Token revocation | Manual blocklist needed | Instant (`DEL session:<id>`) |
+
+**Conclusion:** The 207-byte overhead per authenticated request (≈ 1.6 KB for 8 API calls per typical session) is justified by eliminating Redis infrastructure entirely. Verify latency at p95 (0.109 ms) is 10–30× faster than a Redis round-trip, making the JWT approach faster and cheaper at the scale of this project. The main trade-off — inability to revoke tokens without a blocklist — is an accepted risk documented in [ADR-002](docs/adr/002-stateless-jwt-sessions.md).
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
