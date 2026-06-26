@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/magik-link
+  IMAGE_NAME: jorgeaapaz/magik-link
 
 jobs:
   lint:
@@ -100,7 +100,7 @@ jobs:
 
             # Pull latest image
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ghcr.io/${{ github.repository_owner }}/magik-link:latest
+            docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
 
             # Stop and remove existing container
             docker rm -f magik-link 2>/dev/null || true
@@ -123,7 +123,7 @@ jobs:
               -l "traefik.http.routers.magik-link.tls.certresolver=cloudflare" \
               -l "traefik.http.services.magik-link-svc.loadbalancer.server.port=3000" \
               -l "traefik.docker.network=miseia-net" \
-              ghcr.io/${{ github.repository_owner }}/magik-link:latest
+              ghcr.io/${{ env.IMAGE_NAME }}:latest
 
             echo "Deploy complete — https://magik-link.deviaaps.com"
           ENDSSH
