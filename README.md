@@ -225,6 +225,27 @@ If a logged-in user navigates to `/login`, the `AuthContext` detects a valid ses
 
 ---
 
+## Testing
+
+Unit tests cover JWT helpers and all three API route handlers (send-magic-link, verify, me). Run the suite with:
+
+```bash
+npm test                # run all tests
+npm run test:coverage   # run with coverage report (thresholds: 60% lines, 60% functions, 50% branches)
+```
+
+Current coverage (22 tests, 4 test files):
+
+| Scope | Lines | Functions | Branches |
+|---|---|---|---|
+| All included files | 70% | 71% | 57% |
+| `app/api/auth/me/route.ts` | 86% | 100% | 83% |
+| `app/api/auth/send-magic-link/route.ts` | 92% | 100% | 83% |
+| `app/api/auth/verify/route.ts` | ~90% | 100% | ~80% |
+| `lib/jwt.ts` | 100% | 100% | 50% |
+
+---
+
 ## CI/CD
 
 GitLab CI runs on every push to `main`/`master`:
