@@ -126,4 +126,12 @@ jobs:
               ghcr.io/${{ env.IMAGE_NAME }}:latest
 
             echo "Deploy complete — https://magik-link.deviaaps.com"
+
+            # Diagnostics: verify network and container health
+            echo "=== Containers on miseia-net ==="
+            docker network inspect miseia-net --format '{{range $k,$v := .Containers}}{{$v.Name}} {{end}}' || true
+            echo ""
+            echo "=== magik-link startup logs ==="
+            sleep 3
+            docker logs magik-link --tail 30 2>&1 || true
           ENDSSH
