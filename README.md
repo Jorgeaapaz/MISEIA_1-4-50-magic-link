@@ -74,6 +74,81 @@ await sendMagicLinkEmail(email, magicLink);
 
 ---
 
+## Architecture
+
+### System Components
+
+```mermaid
+graph TD
+    subgraph Browser["Browser (Client)"]
+        LP[Login Page]
+        VP[Verify Page]
+        DP[Dashboard Page]
+        AC[AuthContext\nLocalStorage]
+    end
+
+    subgraph AppRouter["Next.js App Router (Server)"]
+        SML["POST /api/auth/send-magic-link"]
+        VER["GET /api/auth/verify"]
+        ME["GET /api/auth/me"]
+    end
+
+    subgraph ServiceLayer["Service Layer — lib/"]
+        JWT[jwt.ts\nsignToken · verifyToken]
+        MAIL[mail.ts\nsendMagicLinkEmail]
+        DB[db.ts\nMongoDB singleton]
+    end
+
+    MongoDB[(MongoDB\nusers collection)]
+    MailHog[MailHog\nSMTP]
+
+    LP -->|POST email| SML
+    SML --> JWT
+    SML --> MAIL
+    SML --> DB
+    MAIL --> MailHog
+    VP -->|GET token| VER
+    VER --> JWT
+    VER --> DB
+    DP -->|GET session| ME
+    ME --> JWT
+    ME --> DB
+    DB <--> MongoDB
+    AC --> ME
+```
+
+### Magic Link Authentication Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant LP as Login Page
+    participant API as send-magic-link API
+    participant MH as MailHog
+    participant VP as Verify Page
+    participant VAPI as verify API
+    participant DP as Dashboard
+
+    User->>LP: enters email
+    LP->>API: POST /api/auth/send-magic-link
+    API->>API: validate email, upsert user in MongoDB
+    API->>API: sign JWT (15 min, purpose: magic-link)
+    API->>MH: send email with magic link URL
+    MH-->>User: email delivered
+    User->>VP: clicks magic link /auth/verify?token=...
+    VP->>VAPI: GET /api/auth/verify?token=...
+    VAPI->>VAPI: verify JWT signature & expiry
+    VAPI->>VAPI: check purpose === "magic-link"
+    VAPI->>VAPI: update lastLoginAt in MongoDB
+    VAPI->>VAPI: sign session JWT (7 days, purpose: session)
+    VAPI-->>VP: { token: sessionJWT, user }
+    VP->>VP: store token in localStorage
+    VP->>DP: redirect to /dashboard
+    DP->>DP: display user info from AuthContext
+```
+
+---
+
 ## Getting Started
 
 ### Prerequisites
