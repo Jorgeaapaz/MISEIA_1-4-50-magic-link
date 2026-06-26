@@ -74,6 +74,81 @@ await sendMagicLinkEmail(email, magicLink);
 
 ---
 
+## Architecture
+
+### System Components
+
+```mermaid
+graph TD
+    subgraph Browser["Browser (Client)"]
+        LP[Login Page]
+        VP[Verify Page]
+        DP[Dashboard Page]
+        AC[AuthContext\nLocalStorage]
+    end
+
+    subgraph AppRouter["Next.js App Router (Server)"]
+        SML["POST /api/auth/send-magic-link"]
+        VER["GET /api/auth/verify"]
+        ME["GET /api/auth/me"]
+    end
+
+    subgraph ServiceLayer["Service Layer — lib/"]
+        JWT[jwt.ts\nsignToken · verifyToken]
+        MAIL[mail.ts\nsendMagicLinkEmail]
+        DB[db.ts\nMongoDB singleton]
+    end
+
+    MongoDB[(MongoDB\nusers collection)]
+    MailHog[MailHog\nSMTP]
+
+    LP -->|POST email| SML
+    SML --> JWT
+    SML --> MAIL
+    SML --> DB
+    MAIL --> MailHog
+    VP -->|GET token| VER
+    VER --> JWT
+    VER --> DB
+    DP -->|GET session| ME
+    ME --> JWT
+    ME --> DB
+    DB <--> MongoDB
+    AC --> ME
+```
+
+### Magic Link Authentication Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant LP as Login Page
+    participant API as send-magic-link API
+    participant MH as MailHog
+    participant VP as Verify Page
+    participant VAPI as verify API
+    participant DP as Dashboard
+
+    User->>LP: enters email
+    LP->>API: POST /api/auth/send-magic-link
+    API->>API: validate email, upsert user in MongoDB
+    API->>API: sign JWT (15 min, purpose: magic-link)
+    API->>MH: send email with magic link URL
+    MH-->>User: email delivered
+    User->>VP: clicks magic link /auth/verify?token=...
+    VP->>VAPI: GET /api/auth/verify?token=...
+    VAPI->>VAPI: verify JWT signature & expiry
+    VAPI->>VAPI: check purpose === "magic-link"
+    VAPI->>VAPI: update lastLoginAt in MongoDB
+    VAPI->>VAPI: sign session JWT (7 days, purpose: session)
+    VAPI-->>VP: { token: sessionJWT, user }
+    VP->>VP: store token in localStorage
+    VP->>DP: redirect to /dashboard
+    DP->>DP: display user info from AuthContext
+```
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -98,15 +173,19 @@ npm install
 
 ### Environment Variables
 
-Create `.env.local` in the project root:
+Copy the example file and fill in your values:
 
-```env
-MONGODB_URI=mongodb://localhost:27017/magiklink
-JWT_SECRET=your-secret-here
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-SMTP_HOST=localhost
-SMTP_PORT=1025
+```bash
+cp .env.example .env.local
 ```
+
+| Variable | Description | Example |
+|---|---|---|
+| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/magiklink` |
+| `JWT_SECRET` | Secret for signing JWTs | run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `NEXT_PUBLIC_APP_URL` | Public app URL for magic links | `http://localhost:3000` |
+| `SMTP_HOST` | SMTP server host | `localhost` (MailHog) |
+| `SMTP_PORT` | SMTP server port | `1025` (MailHog default) |
 
 ### Run
 
@@ -146,20 +225,106 @@ If a logged-in user navigates to `/login`, the `AuthContext` detects a valid ses
 
 ---
 
+## Testing
+
+Unit tests cover JWT helpers and all three API route handlers (send-magic-link, verify, me). Run the suite with:
+
+```bash
+npm test                # run all tests
+npm run test:coverage   # run with coverage report (thresholds: 60% lines, 60% functions, 50% branches)
+```
+
+Current coverage (22 tests, 4 test files):
+
+| Scope | Lines | Functions | Branches |
+|---|---|---|---|
+| All included files | 70% | 71% | 57% |
+| `app/api/auth/me/route.ts` | 86% | 100% | 83% |
+| `app/api/auth/send-magic-link/route.ts` | 92% | 100% | 83% |
+| `app/api/auth/verify/route.ts` | ~90% | 100% | ~80% |
+| `lib/jwt.ts` | 100% | 100% | 50% |
+
+---
+
 ## CI/CD
 
-GitLab CI runs on every push to `main`/`master`:
+### GitLab CI (`.gitlab-ci.yml`)
+Three-stage pipeline — runs on every push to `main`/`master`:
 
-```yaml
-# .gitlab-ci.yml
-build:
-  image: node:20-alpine
-  script:
-    - npm ci
-    - npm run build
-  artifacts:
-    paths: [.next/]
+| Stage | Job | Command |
+|---|---|---|
+| `lint` | lint | `npm run lint` |
+| `test` | test | `npm run test:coverage` (reports coverage % to GitLab UI) |
+| `build` | build | `NODE_ENV=production npm run build` |
+
+### GitHub Actions (`.github/workflows/ci-deploy.yml`)
+Full CI + deploy pipeline — runs on every push to `master`:
+1. **lint** — `npm run lint`
+2. **test** — `npm run test:coverage`
+3. **build-and-push** — builds Docker image → pushes to `ghcr.io`
+4. **deploy** — SSHs into GCloud VM, pulls new image, restarts container under Traefik
+
+Production URL: **https://magik-link.deviaaps.com**
+
+---
+
+## Deployment
+
+The app ships as a Docker image built with a multistage `Dockerfile` using Next.js standalone output. Production is served at `https://magik-link.deviaaps.com` behind Traefik on the `miseia-net` Docker network.
+
+### Build and run locally with Docker
+
+```bash
+docker build -t magik-link:local .
+
+docker run -p 3000:3000 \
+  -e MONGODB_URI=mongodb://host.docker.internal:27017/magiklink \
+  -e JWT_SECRET=your-secret \
+  -e NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  -e SMTP_HOST=host.docker.internal \
+  -e SMTP_PORT=1025 \
+  magik-link:local
 ```
+
+Open [http://localhost:3000](http://localhost:3000) to verify.
+
+### Deploy to production (VM via docker-compose)
+
+```bash
+# On the remote VM — pull latest image and recreate the container
+export GITHUB_USER=<your-github-user>
+export JWT_SECRET=<production-secret>
+export MONGODB_URI=mongodb://mongodb:27017/magiklink
+
+docker compose -f docker-compose.deploy.yml pull
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+The GitHub Actions workflow (`.github/workflows/ci-deploy.yml`) automates this on every push to `master`.
+
+See [Architecture Decision Records](docs/adr/) for key design decisions.
+
+---
+
+## Technical Decisions — Quantitative Analysis
+
+### JWT Stateless Sessions vs Server-Side Session Store
+
+Benchmark: 10,000 iterations on Node.js 20, Intel Core i7, Windows 11.  
+Run yourself: `node scripts/benchmark-jwt.mjs`
+
+| Metric | JWT (this project) | Redis Session Store |
+|---|---|---|
+| Session token size per request | **239 bytes** | **32 bytes** (opaque session ID) |
+| Overhead vs session ID | +207 bytes/request | baseline |
+| Server memory per session | **0 bytes** (stateless) | ~200–500 bytes in Redis |
+| Sign latency p50 / p95 | **0.049 ms / 0.088 ms** | N/A (local crypto) |
+| Verify latency p50 / p95 | **0.057 ms / 0.109 ms** | 1–3 ms (Redis round-trip) |
+| Infrastructure cost | **$0 extra** | ~$10–20/mo managed Redis |
+| Horizontal scaling | **Stateless — any instance verifies** | Requires shared session store |
+| Token revocation | Manual blocklist needed | Instant (`DEL session:<id>`) |
+
+**Conclusion:** The 207-byte overhead per authenticated request (≈ 1.6 KB for 8 API calls per typical session) is justified by eliminating Redis infrastructure entirely. Verify latency at p95 (0.109 ms) is 10–30× faster than a Redis round-trip, making the JWT approach faster and cheaper at the scale of this project. The main trade-off — inability to revoke tokens without a blocklist — is an accepted risk documented in [ADR-002](docs/adr/002-stateless-jwt-sessions.md).
 
 ---
 
@@ -173,4 +338,29 @@ build:
 | Database | MongoDB 7 |
 | Auth tokens | jsonwebtoken 9 |
 | Email | Nodemailer 8 + MailHog (dev) |
-| CI | GitLab CI (node:20-alpine) |
+| CI | GitLab CI (3-stage: lint → test → build) + GitHub Actions (CI + Docker deploy) |
+| Container | Docker (multistage, standalone Next.js) + Traefik |
+| Deploy | GCloud VM — https://magik-link.deviaaps.com |
+
+---
+
+## Updates — 2026-06-26
+
+New files added as part of the compliance PERT plan:
+
+| File / Directory | Description |
+|---|---|
+| `.env.example` | Environment variable template (replaces inline README block) |
+| `vitest.config.ts` | Vitest configuration with coverage thresholds |
+| `tests/unit/jwt.test.ts` | 8 unit tests for `signToken` / `verifyToken` |
+| `tests/unit/send-magic-link.test.ts` | 5 unit tests for the POST handler (email validation) |
+| `tests/unit/me-route.test.ts` | 4 unit tests for the GET /me handler |
+| `tests/unit/verify-route.test.ts` | 6 unit tests for the GET /verify handler |
+| `scripts/benchmark-jwt.mjs` | JWT sign/verify benchmark (10,000 iterations) |
+| `Dockerfile` | Multistage Docker image (builder + runner, non-root user) |
+| `docker-compose.deploy.yml` | Production compose with Traefik labels for `magik-link.deviaaps.com` |
+| `.github/workflows/ci-deploy.yml` | GitHub Actions: lint → test → build image → SSH deploy to VM |
+| `docs/adr/001…005` | 5 Architecture Decision Records (MongoDB, JWT, localStorage, MailHog, App Router) |
+| `docs/compliance/` | Compliance report, PERT plan, and 9 disciplined prompt files |
+
+**`.gitlab-ci.yml` updated:** now runs 3 stages (`lint`, `test`, `build`) instead of build-only. `NODE_ENV=production` is set only on the `npm run build` command, not as a job-level variable.

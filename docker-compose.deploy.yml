@@ -1,0 +1,26 @@
+services:
+  magik-link:
+    image: ghcr.io/${GITHUB_USER}/magik-link:latest
+    container_name: magik-link
+    restart: unless-stopped
+    environment:
+      - MONGODB_URI=${MONGODB_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - NEXT_PUBLIC_APP_URL=https://magik-link.deviaaps.com
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - NODE_ENV=production
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.magik-link.rule=Host(`magik-link.deviaaps.com`)"
+      - "traefik.http.routers.magik-link.entrypoints=websecure"
+      - "traefik.http.routers.magik-link.tls=true"
+      - "traefik.http.routers.magik-link.tls.certresolver=cloudflare"
+      - "traefik.http.services.magik-link-svc.loadbalancer.server.port=3000"
+      - "traefik.docker.network=miseia-net"
+    networks:
+      - miseia-net
+
+networks:
+  miseia-net:
+    external: true

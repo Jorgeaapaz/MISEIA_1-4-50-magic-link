@@ -1,18 +1,52 @@
 stages:
+  - lint
+  - test
   - build
 
-build:
-  stage: build
-  image: node:20-alpine
+.node_cache: &node_cache
   cache:
     key:
       files:
         - package-lock.json
     paths:
       - node_modules/
+
+lint:
+  stage: lint
+  image: node:20-alpine
+  <<: *node_cache
   script:
     - npm ci
-    - npm run build
+    - npm run lint
+  only:
+    - main
+    - master
+
+test:
+  stage: test
+  image: node:20-alpine
+  <<: *node_cache
+  variables:
+    CI: "true"
+  script:
+    - npm ci
+    - npm run test:coverage
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
+  artifacts:
+    paths:
+      - coverage/
+    expire_in: 1 hour
+  only:
+    - main
+    - master
+
+build:
+  stage: build
+  image: node:20-alpine
+  <<: *node_cache
+  script:
+    - npm ci
+    - NODE_ENV=production npm run build
   artifacts:
     paths:
       - .next/
