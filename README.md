@@ -248,18 +248,23 @@ Current coverage (22 tests, 4 test files):
 
 ## CI/CD
 
-GitLab CI runs on every push to `main`/`master`:
+### GitLab CI (`.gitlab-ci.yml`)
+Three-stage pipeline — runs on every push to `main`/`master`:
 
-```yaml
-# .gitlab-ci.yml
-build:
-  image: node:20-alpine
-  script:
-    - npm ci
-    - npm run build
-  artifacts:
-    paths: [.next/]
-```
+| Stage | Job | Command |
+|---|---|---|
+| `lint` | lint | `npm run lint` |
+| `test` | test | `npm run test:coverage` (reports coverage % to GitLab UI) |
+| `build` | build | `NODE_ENV=production npm run build` |
+
+### GitHub Actions (`.github/workflows/ci-deploy.yml`)
+Full CI + deploy pipeline — runs on every push to `master`:
+1. **lint** — `npm run lint`
+2. **test** — `npm run test:coverage`
+3. **build-and-push** — builds Docker image → pushes to `ghcr.io`
+4. **deploy** — SSHs into GCloud VM, pulls new image, restarts container under Traefik
+
+Production URL: **https://magik-link.deviaaps.com**
 
 ---
 
@@ -333,4 +338,29 @@ Run yourself: `node scripts/benchmark-jwt.mjs`
 | Database | MongoDB 7 |
 | Auth tokens | jsonwebtoken 9 |
 | Email | Nodemailer 8 + MailHog (dev) |
-| CI | GitLab CI (node:20-alpine) |
+| CI | GitLab CI (3-stage: lint → test → build) + GitHub Actions (CI + Docker deploy) |
+| Container | Docker (multistage, standalone Next.js) + Traefik |
+| Deploy | GCloud VM — https://magik-link.deviaaps.com |
+
+---
+
+## Updates — 2026-06-26
+
+New files added as part of the compliance PERT plan:
+
+| File / Directory | Description |
+|---|---|
+| `.env.example` | Environment variable template (replaces inline README block) |
+| `vitest.config.ts` | Vitest configuration with coverage thresholds |
+| `tests/unit/jwt.test.ts` | 8 unit tests for `signToken` / `verifyToken` |
+| `tests/unit/send-magic-link.test.ts` | 5 unit tests for the POST handler (email validation) |
+| `tests/unit/me-route.test.ts` | 4 unit tests for the GET /me handler |
+| `tests/unit/verify-route.test.ts` | 6 unit tests for the GET /verify handler |
+| `scripts/benchmark-jwt.mjs` | JWT sign/verify benchmark (10,000 iterations) |
+| `Dockerfile` | Multistage Docker image (builder + runner, non-root user) |
+| `docker-compose.deploy.yml` | Production compose with Traefik labels for `magik-link.deviaaps.com` |
+| `.github/workflows/ci-deploy.yml` | GitHub Actions: lint → test → build image → SSH deploy to VM |
+| `docs/adr/001…005` | 5 Architecture Decision Records (MongoDB, JWT, localStorage, MailHog, App Router) |
+| `docs/compliance/` | Compliance report, PERT plan, and 9 disciplined prompt files |
+
+**`.gitlab-ci.yml` updated:** now runs 3 stages (`lint`, `test`, `build`) instead of build-only. `NODE_ENV=production` is set only on the `npm run build` command, not as a job-level variable.
