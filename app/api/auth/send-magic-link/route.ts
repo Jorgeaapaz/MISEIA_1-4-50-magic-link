@@ -29,7 +29,8 @@ export async function POST(request: Request) {
     await sendMagicLinkEmail(normalizedEmail, magicLink);
 
     return Response.json({ message: "Magic link enviado" });
-  } catch {
+  } catch (err) {
+    console.error("[send-magic-link] Error:", err);
     return Response.json({ error: "Error interno del servidor" }, { status: 500 });
   }
 }
