@@ -134,4 +134,18 @@ jobs:
             echo "=== magik-link startup logs ==="
             sleep 3
             docker logs magik-link --tail 30 2>&1 || true
+
+            # Live smoke test: send a test request and capture any server-side errors
+            echo ""
+            echo "=== Smoke test: POST /api/auth/send-magic-link ==="
+            sleep 2
+            curl -s -o /tmp/api_response.txt -w "HTTP_STATUS:%{http_code}" \
+              -X POST https://magik-link.deviaaps.com/api/auth/send-magic-link \
+              -H "Content-Type: application/json" \
+              -d '{"email":"ci-smoke-test@deviaaps.com"}' || true
+            cat /tmp/api_response.txt || true
+            echo ""
+            echo "=== Container logs after smoke test ==="
+            sleep 2
+            docker logs magik-link --tail 20 2>&1 || true
           ENDSSH
