@@ -98,15 +98,19 @@ npm install
 
 ### Environment Variables
 
-Create `.env.local` in the project root:
+Copy the example file and fill in your values:
 
-```env
-MONGODB_URI=mongodb://localhost:27017/magiklink
-JWT_SECRET=your-secret-here
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-SMTP_HOST=localhost
-SMTP_PORT=1025
+```bash
+cp .env.example .env.local
 ```
+
+| Variable | Description | Example |
+|---|---|---|
+| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/magiklink` |
+| `JWT_SECRET` | Secret for signing JWTs | run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `NEXT_PUBLIC_APP_URL` | Public app URL for magic links | `http://localhost:3000` |
+| `SMTP_HOST` | SMTP server host | `localhost` (MailHog) |
+| `SMTP_PORT` | SMTP server port | `1025` (MailHog default) |
 
 ### Run
 
